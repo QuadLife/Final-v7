@@ -57,6 +57,7 @@ bool CheckMainTradeTP(PartialTradeInfo &tradeInfo, ENUM_POSITION_TYPE type);
 bool CheckCombinedTP(PartialTradeInfo &tradeInfo, ENUM_POSITION_TYPE type);
 bool IsPriceWithinBuyLimits(double price);
 bool IsPriceWithinSellLimits(double price);
+bool CanPlaceTradeWithFullValidation(ENUM_POSITION_TYPE type, double proposedPrice = 0.0);
 void CloseAllTrades(ENUM_POSITION_TYPE type);
 void AddToPartialSystem(ulong ticket, double volume, double openPrice, ENUM_POSITION_TYPE type);
 void PlaceHelperTrade(PartialTradeInfo &tradeInfo, ENUM_POSITION_TYPE type);
@@ -666,6 +667,12 @@ void ManagePendingOrders()
 
 void PlaceBuyOrder()
 {
+   // Validation complète AVANT de calculer quoi que ce soit
+   if(!CanPlaceTradeWithFullValidation(POSITION_TYPE_BUY))
+   {
+      return; // Validation échouée, sortie immédiate
+   }
+   
    double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
    double point = _Point;
    trade.SetExpertMagicNumber(MagicNumber);
@@ -676,6 +683,7 @@ void PlaceBuyOrder()
    if(!InverserOrdresBuy)
    {
       orderPrice = NormalizeDouble(ask + DistanceOrderBuy * point, _Digits);
+      // Double validation du prix (déjà fait dans CanPlaceTradeWithFullValidation, mais on garde pour sécurité)
       if(!IsPriceWithinBuyLimits(orderPrice))
       {
          Print("❌ Ordre BUY non placé - Prix (", DoubleToString(orderPrice, _Digits), 
@@ -691,6 +699,7 @@ void PlaceBuyOrder()
    else
    {
       orderPrice = NormalizeDouble(ask - DistanceOrderBuy * point, _Digits);
+      // Double validation du prix (déjà fait dans CanPlaceTradeWithFullValidation, mais on garde pour sécurité)
       if(!IsPriceWithinBuyLimits(orderPrice))
       {
          Print("❌ Ordre BUY non placé - Prix (", DoubleToString(orderPrice, _Digits), 
@@ -715,6 +724,12 @@ void PlaceBuyOrder()
 
 void PlaceSellOrder()
 {
+   // Validation complète AVANT de calculer quoi que ce soit
+   if(!CanPlaceTradeWithFullValidation(POSITION_TYPE_SELL))
+   {
+      return; // Validation échouée, sortie immédiate
+   }
+   
    double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
    double point = _Point;
    trade.SetExpertMagicNumber(MagicNumber);
@@ -725,6 +740,7 @@ void PlaceSellOrder()
    if(!InverserOrdresSell)
    {
       orderPrice = NormalizeDouble(bid - DistanceOrderSell * point, _Digits);
+      // Double validation du prix (déjà fait dans CanPlaceTradeWithFullValidation, mais on garde pour sécurité)
       if(!IsPriceWithinSellLimits(orderPrice))
       {
          Print("❌ Ordre SELL non placé - Prix (", DoubleToString(orderPrice, _Digits), 
@@ -740,6 +756,7 @@ void PlaceSellOrder()
    else
    {
       orderPrice = NormalizeDouble(bid + DistanceOrderSell * point, _Digits);
+      // Double validation du prix (déjà fait dans CanPlaceTradeWithFullValidation, mais on garde pour sécurité)
       if(!IsPriceWithinSellLimits(orderPrice))
       {
          Print("❌ Ordre SELL non placé - Prix (", DoubleToString(orderPrice, _Digits), 
@@ -1587,12 +1604,18 @@ void CheckWaveRidingTP()
          Print("WAVE_RIDING BUY: Surf de vague détecté - profit rapide (", totalProfit, "€)");
          double totalVolume = GetTotalVolume(POSITION_TYPE_BUY);
          CloseAllTrades(POSITION_TYPE_BUY);
-         if(CanAffordNextTrade(true))
+         
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedAsk();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_BUY, currentPrice))
          {
-            double currentPrice = GetAdjustedAsk();
             trade.Buy(totalVolume, _Symbol, currentPrice, 0, 0);
             lastRideTime = TimeCurrent();
             Print("WAVE_RIDING BUY: Nouvelle vague ouverte avec ", totalVolume, " lots");
+         }
+         else
+         {
+            Print("❌ WAVE_RIDING BUY: Validation échouée - nouvelle vague annulée");
          }
       }
    }
@@ -1620,12 +1643,18 @@ void CheckWaveRidingTP()
          Print("WAVE_RIDING SELL: Surf de vague détecté - profit rapide (", totalProfit, "€)");
          double totalVolume = GetTotalVolume(POSITION_TYPE_SELL);
          CloseAllTrades(POSITION_TYPE_SELL);
-         if(CanAffordNextTrade(false))
+         
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedBid();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_SELL, currentPrice))
          {
-            double currentPrice = GetAdjustedBid();
             trade.Sell(totalVolume, _Symbol, currentPrice, 0, 0);
             lastRideTime = TimeCurrent();
             Print("WAVE_RIDING SELL: Nouvelle vague ouverte avec ", totalVolume, " lots");
+         }
+         else
+         {
+            Print("❌ WAVE_RIDING SELL: Validation échouée - nouvelle vague annulée");
          }
       }
    }
@@ -1718,16 +1747,22 @@ void CheckMomentumBurstTP()
       
       for(int i = 0; i < closedPositions * 2; i++)
       {
-         if(CanAffordNextTrade(true))
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedAsk();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_BUY, currentPrice))
          {
             int currentTrades = CountPositions(POSITION_TYPE_BUY);
             double newVolume = CalculateTradeVolume(true, currentTrades) * 0.5; // Lots plus petits pour mitrailler
-            double currentPrice = GetAdjustedAsk();
             if(newVolume >= SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
             {
                trade.Buy(newVolume, _Symbol, currentPrice, 0, 0);
                Print("MOMENTUM_BURST BUY: Nouvelle salve - ", newVolume, " lots à ", currentPrice);
             }
+         }
+         else
+         {
+            Print("❌ MOMENTUM_BURST BUY: Validation échouée - salve #", i+1, " annulée");
+            break; // Arrêter si validation échoue
          }
       }
    }
@@ -1758,16 +1793,22 @@ void CheckMomentumBurstTP()
       
       for(int i = 0; i < closedPositions * 2; i++)
       {
-         if(CanAffordNextTrade(false))
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedBid();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_SELL, currentPrice))
          {
             int currentTrades = CountPositions(POSITION_TYPE_SELL);
             double newVolume = CalculateTradeVolume(false, currentTrades) * 0.5;
-            double currentPrice = GetAdjustedBid();
             if(newVolume >= SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN))
             {
                trade.Sell(newVolume, _Symbol, currentPrice, 0, 0);
                Print("MOMENTUM_BURST SELL: Nouvelle salve - ", newVolume, " lots à ", currentPrice);
             }
+         }
+         else
+         {
+            Print("❌ MOMENTUM_BURST SELL: Validation échouée - salve #", i+1, " annulée");
+            break; // Arrêter si validation échoue
          }
       }
    }
@@ -1803,13 +1844,19 @@ void CheckScalpAccumulatorTP()
       
       for(int i = 0; i < closedPositions; i++)
       {
-         if(CanAffordNextTrade(true))
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedAsk();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_BUY, currentPrice))
          {
             int currentTrades = CountPositions(POSITION_TYPE_BUY);
             double volume = CalculateTradeVolume(true, currentTrades);
-            double currentPrice = GetAdjustedAsk();
             trade.Buy(volume, _Symbol, currentPrice, 0, 0);
             Print("SCALP_ACCUMULATOR BUY: Nouveau scalp lancé - ", volume, " lots à ", currentPrice);
+         }
+         else
+         {
+            Print("❌ SCALP_ACCUMULATOR BUY: Validation échouée - scalp #", i+1, " annulé");
+            break; // Arrêter si validation échoue
          }
       }
    }
@@ -1842,13 +1889,19 @@ void CheckScalpAccumulatorTP()
       
       for(int i = 0; i < closedPositions; i++)
       {
-         if(CanAffordNextTrade(false))
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedBid();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_SELL, currentPrice))
          {
             int currentTrades = CountPositions(POSITION_TYPE_SELL);
             double volume = CalculateTradeVolume(false, currentTrades);
-            double currentPrice = GetAdjustedBid();
             trade.Sell(volume, _Symbol, currentPrice, 0, 0);
             Print("SCALP_ACCUMULATOR SELL: Nouveau scalp lancé - ", volume, " lots à ", currentPrice);
+         }
+         else
+         {
+            Print("❌ SCALP_ACCUMULATOR SELL: Validation échouée - scalp #", i+1, " annulé");
+            break; // Arrêter si validation échoue
          }
       }
    }
@@ -1982,7 +2035,9 @@ void CheckProfitCompoundingTP()
       
       for(int i = 0; i < closedPositions; i++)
       {
-         if(CanAffordNextTrade(true))
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedAsk();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_BUY, currentPrice))
          {
             int currentTrades = CountPositions(POSITION_TYPE_BUY);
             double baseVolume = CalculateTradeVolume(true, currentTrades);
@@ -1991,11 +2046,15 @@ void CheckProfitCompoundingTP()
             if(totalProfit > 100) compoundMultiplier = 1.5;     // +50% si profit > 100€
             if(totalProfit > 200) compoundMultiplier = 2.0;     // +100% si profit > 200€
             double compoundedVolume = baseVolume * compoundMultiplier;
-            double currentPrice = GetAdjustedAsk();
             double maxVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
             if(compoundedVolume > maxVolume) compoundedVolume = maxVolume;
             trade.Buy(compoundedVolume, _Symbol, currentPrice, 0, 0);
             Print("PROFIT_COMPOUNDING BUY: Réinvestissement amplifié - ", compoundedVolume, " lots (x", compoundMultiplier, ") à ", currentPrice);
+         }
+         else
+         {
+            Print("❌ PROFIT_COMPOUNDING BUY: Validation échouée - réinvestissement #", i+1, " annulé");
+            break; // Arrêter si validation échoue
          }
       }
    }
@@ -2030,7 +2089,9 @@ void CheckProfitCompoundingTP()
       
       for(int i = 0; i < closedPositions; i++)
       {
-         if(CanAffordNextTrade(false))
+         // VALIDATION COMPLÈTE avant placement
+         double currentPrice = GetAdjustedBid();
+         if(CanPlaceTradeWithFullValidation(POSITION_TYPE_SELL, currentPrice))
          {
             int currentTrades = CountPositions(POSITION_TYPE_SELL);
             double baseVolume = CalculateTradeVolume(false, currentTrades);
@@ -2039,11 +2100,15 @@ void CheckProfitCompoundingTP()
             if(totalProfit > 100) compoundMultiplier = 1.5;
             if(totalProfit > 200) compoundMultiplier = 2.0;
             double compoundedVolume = baseVolume * compoundMultiplier;
-            double currentPrice = GetAdjustedBid();
             double maxVolume = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
             if(compoundedVolume > maxVolume) compoundedVolume = maxVolume;
             trade.Sell(compoundedVolume, _Symbol, currentPrice, 0, 0);
             Print("PROFIT_COMPOUNDING SELL: Réinvestissement amplifié - ", compoundedVolume, " lots (x", compoundMultiplier, ") à ", currentPrice);
+         }
+         else
+         {
+            Print("❌ PROFIT_COMPOUNDING SELL: Validation échouée - réinvestissement #", i+1, " annulé");
+            break; // Arrêter si validation échoue
          }
       }
    }
@@ -2089,13 +2154,19 @@ void CheckBreakoutSurferTP()
                {
                   Print("BREAKOUT_SURFER BUY: Vague surfée - Position ", ticket, " fermée (", pips, " pips ≥ ", surfTarget, " pips)");
                   trade.PositionClose(ticket);
-                  if(momentumDetected && CanAffordNextTrade(true))
+                  
+                  // VALIDATION COMPLÈTE avant placement
+                  double askPrice = GetAdjustedAsk();
+                  if(momentumDetected && CanPlaceTradeWithFullValidation(POSITION_TYPE_BUY, askPrice))
                   {
                      int currentTrades = CountPositions(POSITION_TYPE_BUY);
                      double volume = CalculateTradeVolume(true, currentTrades);
-                     double askPrice = GetAdjustedAsk();
                      trade.Buy(volume, _Symbol, askPrice, 0, 0);
                      Print("BREAKOUT_SURFER BUY: Nouveau surf lancé - ", volume, " lots à ", askPrice);
+                  }
+                  else if(momentumDetected)
+                  {
+                     Print("❌ BREAKOUT_SURFER BUY: Validation échouée - nouveau surf annulé");
                   }
                }
             }
@@ -2122,13 +2193,19 @@ void CheckBreakoutSurferTP()
                {
                   Print("BREAKOUT_SURFER SELL: Vague surfée - Position ", ticket, " fermée (", pips, " pips ≥ ", surfTarget, " pips)");
                   trade.PositionClose(ticket);
-                  if(momentumDetected && CanAffordNextTrade(false))
+                  
+                  // VALIDATION COMPLÈTE avant placement
+                  double bidPrice = GetAdjustedBid();
+                  if(momentumDetected && CanPlaceTradeWithFullValidation(POSITION_TYPE_SELL, bidPrice))
                   {
                      int currentTrades = CountPositions(POSITION_TYPE_SELL);
                      double volume = CalculateTradeVolume(false, currentTrades);
-                     double bidPrice = GetAdjustedBid();
                      trade.Sell(volume, _Symbol, bidPrice, 0, 0);
                      Print("BREAKOUT_SURFER SELL: Nouveau surf lancé - ", volume, " lots à ", bidPrice);
+                  }
+                  else if(momentumDetected)
+                  {
+                     Print("❌ BREAKOUT_SURFER SELL: Validation échouée - nouveau surf annulé");
                   }
                }
             }
@@ -2251,53 +2328,21 @@ void PlaceHelperTrade(PartialTradeInfo &tradeInfo, ENUM_POSITION_TYPE type)
       int maxHelpersAllowed = MathMin(currentGridLevel, tradeInfo.unitsRemaining);
       if(helpersCount < maxHelpersAllowed)
       {
-         ENUM_TIMEFRAMES timeframe = (type == POSITION_TYPE_BUY) ? TimeframeBuy : TimeframeSell;
-         if(!IsValidTradingTime(timeframe, type == POSITION_TYPE_BUY))
-         {
-            Print("❌ Helper bloqué: Horaire de trading non valide");
-            return;
-         }
-         
-         if(!CanAffordNextTrade(type == POSITION_TYPE_BUY))
-         {
-            Print("❌ Helper bloqué: Budget insuffisant");
-            return;
-         }
-         
-         int currentTrades = CountPositions(type);
-         int maxTrades = (type == POSITION_TYPE_BUY) ? MaxBuyTrades : MaxSellTrades;
-         if(currentTrades >= maxTrades)
-         {
-            Print("❌ Helper bloqué: Limite de trades atteinte (", currentTrades, "/", maxTrades, ")");
-            return;
-         }
-         
          double currentPrice = (type == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-         int minDistance = (type == POSITION_TYPE_BUY) ? DistanceMinEntre2TradesBuy : DistanceMinEntre2TradesSell;
-         for(int pos = 0; pos < PositionsTotal(); pos++)
+         
+         // VALIDATION COMPLÈTE avec la nouvelle fonction centralisée
+         if(!CanPlaceTradeWithFullValidation(type, currentPrice))
          {
-            ulong posTicket = PositionGetTicket(pos);
-            if(PositionSelectByTicket(posTicket) && posTicket != tradeInfo.ticket)
-            {
-               if(PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
-                  PositionGetString(POSITION_SYMBOL) == _Symbol &&
-                  (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == type)
-               {
-                  double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
-                  double distance = MathAbs(currentPrice - openPrice) / _Point;
-                  if(distance < minDistance)
-                  {
-                     Print("❌ Helper bloqué: Distance insuffisante (", distance, " < ", minDistance, " points)");
-                     return;
-                  }
-               }
-            }
+            Print("❌ Helper bloqué: Validation complète échouée");
+            return;
          }
          
+         // Validations spécifiques aux helpers (prix avantageux)
          bool nouvelOrdreAvantageux = (type == POSITION_TYPE_BUY) ? NouveauxOrdresAPrixPlusAvantageuxBuy : NouveauxOrdresAPrixPlusAvantageuxSell;
          if(nouvelOrdreAvantageux)
          {
             double allPrices[];
+            int minDistance = (type == POSITION_TYPE_BUY) ? DistanceMinEntre2TradesBuy : DistanceMinEntre2TradesSell;
             if(type == POSITION_TYPE_BUY)
                GetAllBuySidePrices(allPrices);
             else
@@ -2740,6 +2785,84 @@ bool IsPriceWithinSellLimits(double price)
       return false;
    if(PrixMaximumVente > 0.0 && price > PrixMaximumVente)
       return false;
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Validation complète avant tout placement d'ordre                |
+//+------------------------------------------------------------------+
+bool CanPlaceTradeWithFullValidation(ENUM_POSITION_TYPE type, double proposedPrice = 0.0)
+{
+   // 1. CRITIQUE: Vérifier le budget disponible
+   if(!CanAffordNextTrade(type == POSITION_TYPE_BUY))
+   {
+      Print("❌ Trade bloqué: Budget insuffisant pour ", (type == POSITION_TYPE_BUY ? "BUY" : "SELL"));
+      return false;
+   }
+   
+   // 2. Vérifier les limites de nombre de trades
+   int currentTrades = CountPositions(type);
+   int maxTrades = (type == POSITION_TYPE_BUY) ? MaxBuyTrades : MaxSellTrades;
+   if(currentTrades >= maxTrades)
+   {
+      Print("❌ Trade bloqué: Limite de trades atteinte (", currentTrades, "/", maxTrades, ") pour ", (type == POSITION_TYPE_BUY ? "BUY" : "SELL"));
+      return false;
+   }
+   
+   // 3. Vérifier les conditions temporelles (timeframe et horaires)
+   ENUM_TIMEFRAMES timeframe = (type == POSITION_TYPE_BUY) ? TimeframeBuy : TimeframeSell;
+   if(!IsValidTradingTime(timeframe, type == POSITION_TYPE_BUY))
+   {
+      Print("❌ Trade bloqué: Horaire de trading non valide pour ", (type == POSITION_TYPE_BUY ? "BUY" : "SELL"));
+      return false;
+   }
+   
+   // 4. Vérifier les limites de prix si un prix est proposé
+   if(proposedPrice > 0.0)
+   {
+      if(type == POSITION_TYPE_BUY && !IsPriceWithinBuyLimits(proposedPrice))
+      {
+         Print("❌ Trade BUY bloqué: Prix (", DoubleToString(proposedPrice, _Digits), 
+               ") hors limites [", DoubleToString(PrixMinimumAchat, _Digits), " - ", 
+               DoubleToString(PrixMaximumAchat, _Digits), "]");
+         return false;
+      }
+      if(type == POSITION_TYPE_SELL && !IsPriceWithinSellLimits(proposedPrice))
+      {
+         Print("❌ Trade SELL bloqué: Prix (", DoubleToString(proposedPrice, _Digits), 
+               ") hors limites [", DoubleToString(PrixMinimumVente, _Digits), " - ", 
+               DoubleToString(PrixMaximumVente, _Digits), "]");
+         return false;
+      }
+   }
+   
+   // 5. Vérifier la distance minimum entre trades (sauf pour les modes spéciaux)
+   bool isPartialClosureMode = (type == POSITION_TYPE_BUY && BuyMode == BUY_PARTIAL_CLOSURE) ||
+                               (type == POSITION_TYPE_SELL && SellMode == SELL_PARTIAL_CLOSURE);
+   if(!isPartialClosureMode && proposedPrice > 0.0)
+   {
+      int minDistance = (type == POSITION_TYPE_BUY) ? DistanceMinEntre2TradesBuy : DistanceMinEntre2TradesSell;
+      for(int i = 0; i < PositionsTotal(); i++)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(PositionSelectByTicket(ticket))
+         {
+            if(PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
+               PositionGetString(POSITION_SYMBOL) == _Symbol &&
+               (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == type)
+            {
+               double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+               double distance = MathAbs(proposedPrice - openPrice) / _Point;
+               if(distance < minDistance)
+               {
+                  Print("❌ Trade bloqué: Distance insuffisante (", distance, " < ", minDistance, " points) pour ", (type == POSITION_TYPE_BUY ? "BUY" : "SELL"));
+                  return false;
+               }
+            }
+         }
+      }
+   }
+   
    return true;
 }
 
